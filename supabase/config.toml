@@ -1,0 +1,4 @@
+project_id = "qitwzgaqhfqtkkxnkhjz"
+
+[functions.poverty-predictor]
+verify_jwt = false
