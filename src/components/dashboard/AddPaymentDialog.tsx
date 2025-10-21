@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { z } from "zod";
 import {
   Dialog,
   DialogContent,
@@ -19,6 +20,20 @@ interface AddPaymentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
+
+const paymentSchema = z.object({
+  amount: z.number().positive("Amount must be positive").max(100000, "Amount exceeds maximum"),
+  payment_date: z.string().refine((d) => {
+    const dt = new Date(d);
+    if (Number.isNaN(dt.getTime())) return false;
+    const today = new Date();
+    dt.setHours(0,0,0,0);
+    today.setHours(0,0,0,0);
+    return dt <= today;
+  }, "Cannot use future dates"),
+  payment_method: z.string().trim().max(50, "Payment method too long").optional(),
+  notes: z.string().trim().max(500, "Notes too long").optional(),
+});
 
 export function AddPaymentDialog({ studentId, open, onOpenChange }: AddPaymentDialogProps) {
   const [loading, setLoading] = useState(false);
@@ -52,17 +67,55 @@ export function AddPaymentDialog({ studentId, open, onOpenChange }: AddPaymentDi
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
+
+    const parsed = paymentSchema.safeParse({
+      amount: Number(formData.amount),
+      payment_date: formData.payment_date,
+      payment_method: formData.payment_method ? formData.payment_method.trim() : undefined,
+      notes: formData.notes ? formData.notes.trim() : undefined,
+    });
+
+    if (!parsed.success) {
+      toast({
+        title: "Validation Error",
+        description: parsed.error.errors[0]?.message ?? "Please check your input.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (student) {
+      const amount = parsed.data.amount;
+      if (amount > balance && balance > 0) {
+        toast({
+          title: "Validation Error",
+          description: "Amount exceeds remaining balance.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
 
     const { data: { user } } = await supabase.auth.getUser();
 
+    if (!user) {
+      toast({
+        title: "Error",
+        description: "You must be signed in to record a payment.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
+
     const { error } = await supabase.from("payments").insert({
       student_id: studentId,
-      amount: Number(formData.amount),
-      payment_date: formData.payment_date,
-      payment_method: formData.payment_method || null,
-      notes: formData.notes || null,
-      created_by: user?.id,
+      amount: parsed.data.amount,
+      payment_date: parsed.data.payment_date,
+      payment_method: parsed.data.payment_method ?? null,
+      notes: parsed.data.notes ?? null,
+      created_by: user.id,
     });
 
     if (error) {

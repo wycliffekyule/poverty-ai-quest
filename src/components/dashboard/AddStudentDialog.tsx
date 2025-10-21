@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { z } from "zod";
 import {
   Dialog,
   DialogContent,
@@ -18,6 +19,14 @@ interface AddStudentDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+const studentSchema = z.object({
+  student_name: z.string().trim().min(1, "Student name is required").max(100, "Student name too long"),
+  class_name: z.string().trim().min(1, "Class is required").max(50, "Class name too long"),
+  total_fees: z.number().positive("Total fees must be positive").max(100000, "Total fees exceeds maximum"),
+  parent_name: z.string().trim().max(100, "Parent name too long").optional(),
+  parent_contact: z.string().trim().max(255, "Parent contact too long").optional(),
+});
+
 export function AddStudentDialog({ open, onOpenChange }: AddStudentDialogProps) {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -32,14 +41,41 @@ export function AddStudentDialog({ open, onOpenChange }: AddStudentDialogProps) 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
+
+    // Validate input
+    const parsed = studentSchema.safeParse({
+      student_name: formData.student_name.trim(),
+      class_name: formData.class_name.trim(),
+      total_fees: Number(formData.total_fees),
+      parent_name: formData.parent_name ? formData.parent_name.trim() : undefined,
+      parent_contact: formData.parent_contact ? formData.parent_contact.trim() : undefined,
+    });
+
+    if (!parsed.success) {
+      toast({
+        title: "Validation Error",
+        description: parsed.error.errors[0]?.message ?? "Please check your input.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     const { data: { user } } = await supabase.auth.getUser();
 
+    if (!user) {
+      toast({
+        title: "Error",
+        description: "You must be signed in to add a student.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
+
     const { error } = await supabase.from("students").insert({
-      ...formData,
-      total_fees: Number(formData.total_fees),
-      created_by: user?.id,
+      ...parsed.data,
+      created_by: user.id,
     });
 
     if (error) {
